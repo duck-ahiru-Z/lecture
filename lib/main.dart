@@ -6,6 +6,7 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart'; // 📤 音声のシェア用に追加！
 
 // 👇 さっき作った3つのファイルを読み込む！
 import 'env.dart';
@@ -236,6 +237,24 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  // 🌟 音声ファイルのシェア（書き出し）機能
+  Future<void> _shareAudioFile(LectureRecord record) async {
+    final file = File(record.path);
+    if (await file.exists()) {
+      final xFile = XFile(record.path);
+      await Share.shareXFiles(
+        [xFile],
+        text: '【講義ハック】${record.subjectName} 第${record.lectureNumber}回の音声データ',
+      );
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('音声ファイルが見つかりません。'), backgroundColor: Colors.redAccent),
+        );
+      }
+    }
+  }
+
   Future<void> _deleteRecord(LectureRecord record) async {
     return showDialog(
       context: context,
@@ -304,6 +323,8 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
   }
+
+  // ======== 🖥️ UI構築 ========
 
   Widget _buildRecordTab() {
     return Center(
@@ -562,9 +583,11 @@ class _MainScreenState extends State<MainScreen> {
                           ],
 
                           const Padding(padding: EdgeInsets.symmetric(vertical: 8.0), child: Divider()),
+                          // 🌟 ここに書き出し（シェア）ボタンを追加！
                           Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
+                              IconButton(icon: const Icon(Icons.ios_share, color: Colors.blueAccent), tooltip: '音声を書き出し', onPressed: () => _shareAudioFile(record)),
                               IconButton(icon: const Icon(Icons.edit_outlined, color: Colors.grey), tooltip: '編集', onPressed: () => _showEditDialog(record)),
                               IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent), tooltip: '削除', onPressed: () => _deleteRecord(record)),
                               const SizedBox(width: 8),

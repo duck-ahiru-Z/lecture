@@ -4,9 +4,11 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:share_plus/share_plus.dart';    // 📤 テキストのシェア用に追加
+import 'package:flutter/services.dart';         // 📋 コピー機能(Clipboard)用に追加
 
-import 'models.dart'; // モデルを読み込む
-import 'env.dart';    // APIキーを読み込む
+import 'models.dart'; 
+import 'env.dart';    
 
 // ======== 📖 要約を読む専用スクリーン ========
 class SummaryScreen extends StatefulWidget {
@@ -104,6 +106,37 @@ class _SummaryScreenState extends State<SummaryScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.deepPurple),
+        actions: [
+          // 🌟 📋 コピーボタンを追加
+          IconButton(
+            icon: const Icon(Icons.copy, color: Colors.deepPurple),
+            tooltip: 'ノートをコピー',
+            onPressed: () async {
+              if (widget.record.summaryText != null) {
+                await Clipboard.setData(ClipboardData(text: widget.record.summaryText!));
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('要約をクリップボードにコピーしました！'), backgroundColor: Colors.deepPurple),
+                  );
+                }
+              }
+            },
+          ),
+          // 🌟 💬 シェアボタンを追加
+          IconButton(
+            icon: const Icon(Icons.ios_share, color: Colors.deepPurple),
+            tooltip: 'ノートを共有',
+            onPressed: () {
+              if (widget.record.summaryText != null) {
+                Share.share(
+                  '【${widget.record.subjectName} 第${widget.record.lectureNumber}回 講義ノート】\n\n${widget.record.summaryText!}\n\n---\n※「講義ハック」アプリでAIが自動生成しました',
+                  subject: '${widget.record.subjectName}のノート',
+                );
+              }
+            },
+          ),
+          const SizedBox(width: 8), 
+        ],
       ),
       body: _isLoading
           ? Center(
