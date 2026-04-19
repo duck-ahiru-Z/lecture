@@ -4,13 +4,13 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:share_plus/share_plus.dart';    // 📤 テキストのシェア用に追加
-import 'package:flutter/services.dart';         // 📋 コピー機能(Clipboard)用に追加
+import 'package:share_plus/share_plus.dart';    // 📤 テキストのシェア用
+import 'package:flutter/services.dart';         // 📋 コピー機能用
 
 import 'models.dart'; 
 import 'env.dart';    
+import 'l10n.dart'; // 🌍 言語システムをインポート
 
-// ======== 📖 要約を読む専用スクリーン ========
 class SummaryScreen extends StatefulWidget {
   final LectureRecord record;
   final VoidCallback onSummarySaved;
@@ -35,7 +35,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
   }
 
   Future<void> _generateSummary() async {
-    setState(() { _isLoading = true; _statusText = '1/2: 音声をサーバーへアップロード中...'; });
+    setState(() { _isLoading = true; _statusText = '1/2: Uploading...'; });
     try {
       final file = File(widget.record.path);
       final bytes = await file.readAsBytes();
@@ -46,12 +46,15 @@ class _SummaryScreenState extends State<SummaryScreen> {
 
       final uploadRes = await request.send();
       final uploadBody = await uploadRes.stream.bytesToString();
-      if (uploadRes.statusCode != 200) throw Exception('アップロード失敗');
+      if (uploadRes.statusCode != 200) throw Exception('Upload failed');
       final fileUri = jsonDecode(uploadBody)['file']['uri'];
 
-      setState(() => _statusText = '2/2: 優秀なTAがノートを作成中...\n(90分の講義だと少し時間がかかります)');
+      setState(() => _statusText = '2/2: AI is working...');
       final model = GenerativeModel(model: 'gemini-2.5-flash', apiKey: geminiApiKey);
       
+      // 🌟 AIの出力言語を、ユーザーが選択している言語（アプリのUI言語）に合わせる設定
+      final targetLanguage = supportedLanguages[appLocale.value] ?? 'English';
+
       final prompt = '''
 あなたは優秀な大学のティーチングアシスタント（TA）です。
 提供される大学の講義データ（音声データ、または文字起こしテキスト）を深く解析し、学生の学習理解と成績向上を最大限サポートするための詳細なノートを作成してください。
@@ -59,6 +62,8 @@ class _SummaryScreenState extends State<SummaryScreen> {
 【重要】
 最初の挨拶や最後の締めの言葉など、AIとしての会話的な応答は一切含めないでください。
 以下のフォーマットに沿った内容のみを、Markdown形式で直接出力してください。
+【超重要】
+必ず「$targetLanguage」の言語に翻訳して出力してください。（例: If the target is English, write strictly in English. 如果是中文，請用中文輸出。）
 
 ## 1. 講義の要約（サマリー）
 - 今回の講義の全体的なテーマと、結論や最も重要なメッセージを簡潔にまとめてください。
@@ -93,7 +98,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
       widget.onSummarySaved();
 
     } catch (e) {
-      setState(() { _errorMessage = 'エラーが発生しました。\n$e'; _isLoading = false; });
+      setState(() { _errorMessage = 'Error: $e'; _isLoading = false; });
     }
   }
 
@@ -102,36 +107,25 @@ class _SummaryScreenState extends State<SummaryScreen> {
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
       appBar: AppBar(
-        title: Text('${widget.record.subjectName} 第${widget.record.lectureNumber}回', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.black87)),
+        title: Text(widget.record.subjectName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.black87)),
         backgroundColor: Colors.white,
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.deepPurple),
         actions: [
-          // 🌟 📋 コピーボタンを追加
           IconButton(
             icon: const Icon(Icons.copy, color: Colors.deepPurple),
-            tooltip: 'ノートをコピー',
             onPressed: () async {
               if (widget.record.summaryText != null) {
                 await Clipboard.setData(ClipboardData(text: widget.record.summaryText!));
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('要約をクリップボードにコピーしました！'), backgroundColor: Colors.deepPurple),
-                  );
-                }
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied!'), backgroundColor: Colors.deepPurple));
               }
             },
           ),
-          // 🌟 💬 シェアボタンを追加
           IconButton(
             icon: const Icon(Icons.ios_share, color: Colors.deepPurple),
-            tooltip: 'ノートを共有',
             onPressed: () {
               if (widget.record.summaryText != null) {
-                Share.share(
-                  '【${widget.record.subjectName} 第${widget.record.lectureNumber}回 講義ノート】\n\n${widget.record.summaryText!}\n\n---\n※「講義ハック」アプリでAIが自動生成しました',
-                  subject: '${widget.record.subjectName}のノート',
-                );
+                Share.share('【${widget.record.subjectName}】\n\n${widget.record.summaryText!}\n\n---\nCreated by Lecture Hack AI');
               }
             },
           ),
