@@ -1,4 +1,4 @@
-package com.example.lecture_hack
+package com.duckahiruz.lecturehack
 
 import io.flutter.embedding.android.FlutterActivity
 

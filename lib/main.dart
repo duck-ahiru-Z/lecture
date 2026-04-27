@@ -1,24 +1,44 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart'; // 🌍 多言語設定用
+import 'package:flutter_localizations/flutter_localizations.dart'; 
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
+import 'dart:isolate';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:share_plus/share_plus.dart'; 
 import 'package:google_fonts/google_fonts.dart';
 
 import 'env.dart';
 import 'models.dart';
 import 'summary_screen.dart';
-import 'l10n.dart'; // 🌍 翻訳ファイルを読み込む
+import 'l10n.dart'; 
+
+// ============================================================================
+// 🛡️ バックグラウンド処理 
+// ============================================================================
+@pragma('vm:entry-point')
+void startCallback() {
+  FlutterForegroundTask.setTaskHandler(MyTaskHandler());
+}
+
+class MyTaskHandler extends TaskHandler {
+  @override 
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+  
+  @override 
+  void onRepeatEvent(DateTime timestamp) {}
+  
+  @override 
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
+}
 
 void main() async {
-  // 🌍 起動前に言語設定を読み込む
   WidgetsFlutterBinding.ensureInitialized();
-  await loadSavedLocale();
+  await loadSavedLocale(); 
   runApp(const MyApp());
 }
 
@@ -26,7 +46,6 @@ class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
   Widget build(BuildContext context) {
-    // 🌍 ValueListenableBuilderで囲むことで、言語変更時にアプリ全体が瞬時に切り替わります
     return ValueListenableBuilder<String>(
       valueListenable: appLocale,
       builder: (context, currentLang, child) {
@@ -37,11 +56,10 @@ class MyApp extends StatelessWidget {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          supportedLocales: const [Locale('ja', ''), Locale('en', '')], // システム側は基本この2つで対応
+          supportedLocales: const [Locale('ja', ''), Locale('en', '')],
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
             useMaterial3: true,
-            // 🎨 日本語の時はNotoSansJP、その他の言語の時はデフォルトで美しいInterを使う設定
             textTheme: currentLang == 'ja' 
                 ? GoogleFonts.notoSansJpTextTheme(Theme.of(context).textTheme)
                 : GoogleFonts.interTextTheme(Theme.of(context).textTheme),
@@ -81,7 +99,7 @@ class _MainScreenState extends State<MainScreen> {
   double _playbackRate = 1.0; 
   bool _isLooping = false; 
 
-  String _selectedFilter = 'All'; // 検索用初期値
+  String _selectedFilter = 'All'; 
   String _searchQuery = '';
 
   @override
@@ -100,6 +118,7 @@ class _MainScreenState extends State<MainScreen> {
       }
     }));
 
+    _initForegroundTask(); 
     _loadData(); 
   }
 
@@ -109,6 +128,28 @@ class _MainScreenState extends State<MainScreen> {
     _audioRecorder.dispose();
     _audioPlayer.dispose();
     super.dispose();
+  }
+
+  void _initForegroundTask() {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'recording_channel',
+        channelName: 'Recording Status',
+        channelDescription: 'Continues recording in background',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: true, 
+        playSound: false
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.repeat(5000), 
+        autoRunOnBoot: false, 
+        allowWakeLock: true, 
+        allowWifiLock: true
+      ),
+    );
   }
 
   Future<void> _loadData() async {
@@ -153,10 +194,11 @@ class _MainScreenState extends State<MainScreen> {
         }
       }
     }
-    return tr('subject_other'); // 🌍 翻訳
+    return tr('subject_other'); 
   }
 
   int _calculateLectureNumber(String subjectName, DateTime newDate) {
+    if (subjectName == tr('subject_other')) return 1;
     final pastRecords = _records.where((r) => r.subjectName == subjectName).toList()..sort((a, b) => a.date.compareTo(b.date));
     int currentNumber = 1;
     DateTime? lastDate;
@@ -180,18 +222,27 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _startRecording() async {
     try {
       if (await _audioRecorder.hasPermission()) {
+        await FlutterForegroundTask.requestNotificationPermission();
+        await FlutterForegroundTask.startService(
+          notificationTitle: tr('app_title'),
+          notificationText: tr('status_recording'),
+          callback: startCallback,
+        );
+
         final dir = await getApplicationDocumentsDirectory();
         final filePath = '${dir.path}/lecture_${DateTime.now().millisecondsSinceEpoch}.m4a';
         await _audioRecorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: filePath);
         setState(() { _isRecording = true; _isPaused = false; _recordDuration = 0; });
         _timer = Timer.periodic(const Duration(seconds: 1), (Timer t) => setState(() => _recordDuration++));
       }
-    } catch (e) { debugPrint('録音エラー: $e'); }
+    } catch (e) { debugPrint('Recording Error: $e'); }
   }
 
   Future<void> _stopRecording() async {
     final path = await _audioRecorder.stop();
     _timer?.cancel();
+    await FlutterForegroundTask.stopService();
+
     setState(() { _isRecording = false; _isPaused = false; });
 
     if (path != null) {
@@ -266,7 +317,7 @@ class _MainScreenState extends State<MainScreen> {
       final xFile = XFile(record.path);
       await Share.shareXFiles(
         [xFile],
-        text: '${record.subjectName} Vol.${record.lectureNumber}',
+        text: '${record.subjectName} ${tr('vol')}${record.lectureNumber} Audio',
       );
     }
   }
@@ -275,8 +326,8 @@ class _MainScreenState extends State<MainScreen> {
     return showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(tr('dialog_delete_title'), style: const TextStyle(color: Colors.red)), // 🌍 翻訳
-        content: Text(tr('dialog_delete_msg')), // 🌍 翻訳
+        title: Text(tr('dialog_delete_title'), style: const TextStyle(color: Colors.red)), 
+        content: Text(tr('dialog_delete_msg')), 
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: Text(tr('btn_cancel'))),
           ElevatedButton(
@@ -305,14 +356,14 @@ class _MainScreenState extends State<MainScreen> {
     return showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(tr('btn_edit')), // 🌍 翻訳
+        title: Text(tr('btn_edit')), 
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (registeredSubjects.isNotEmpty) ...[
-                const Text('Subject List', style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold)),
+                const Text('Subjects', style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8, runSpacing: 4,
@@ -320,8 +371,8 @@ class _MainScreenState extends State<MainScreen> {
                 ),
                 const Divider(height: 24),
               ],
-              TextField(controller: subCtrl, decoration: const InputDecoration(labelText: 'Subject Name')),
-              TextField(controller: numCtrl, decoration: const InputDecoration(labelText: 'Vol.'), keyboardType: TextInputType.number),
+              TextField(controller: subCtrl, decoration: InputDecoration(labelText: tr('subject_hint'))),
+              TextField(controller: numCtrl, decoration: InputDecoration(labelText: tr('vol')), keyboardType: TextInputType.number),
             ],
           ),
         ),
@@ -340,7 +391,6 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  // 🌍 言語切り替えダイアログ
   void _showLanguagePicker() {
     showModalBottomSheet(
       context: context,
@@ -379,13 +429,13 @@ class _MainScreenState extends State<MainScreen> {
               children: [
                 const Icon(Icons.push_pin, color: Colors.deepPurple, size: 18),
                 const SizedBox(width: 8),
-                Text('${tr('status_auto_subject')}${_getCurrentSubject()}', style: const TextStyle(fontSize: 16, color: Colors.deepPurple, fontWeight: FontWeight.bold)), // 🌍 翻訳
+                Text('${tr('status_auto_subject')}${_getCurrentSubject()}', style: const TextStyle(fontSize: 16, color: Colors.deepPurple, fontWeight: FontWeight.bold)), 
               ],
             ),
           ),
           const SizedBox(height: 40),
           Text(
-            _isRecording ? (_isPaused ? tr('status_paused') : tr('status_recording')) : tr('status_standby'), // 🌍 翻訳
+            _isRecording ? (_isPaused ? tr('status_paused') : tr('status_recording')) : tr('status_standby'), 
             style: TextStyle(color: _isRecording ? Colors.red : Colors.grey, fontWeight: FontWeight.bold, fontSize: 18),
           ),
           const SizedBox(height: 10),
@@ -429,8 +479,8 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Widget _buildHistoryTab() {
-    final String currentAllText = tr('filter_all'); // 🌍 翻訳
-    final isEn = appLocale.value != 'ja';
+    final String currentAllText = tr('filter_all'); 
+    final isEn = appLocale.value != 'ja' && appLocale.value != 'zh' && appLocale.value != 'ko';
 
     final filteredRecords = _records.where((r) {
       final matchFilter = _selectedFilter == currentAllText || _selectedFilter == 'すべて' || _selectedFilter == 'All' || r.subjectName == _selectedFilter;
@@ -449,7 +499,7 @@ class _MainScreenState extends State<MainScreen> {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
           child: TextField(
             decoration: InputDecoration(
-              hintText: tr('search_hint'), // 🌍 翻訳
+              hintText: tr('search_hint'), 
               prefixIcon: const Icon(Icons.search, color: Colors.deepPurple),
               filled: true, fillColor: Colors.grey.shade100,
               contentPadding: const EdgeInsets.symmetric(vertical: 0),
@@ -483,7 +533,7 @@ class _MainScreenState extends State<MainScreen> {
                   children: [
                     Icon(Icons.search_off, size: 80, color: Colors.grey.shade300),
                     const SizedBox(height: 16),
-                    Text(tr('no_data'), style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.bold)), // 🌍 翻訳
+                    Text(tr('no_data'), style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.bold)), 
                   ],
                 ),
               )
@@ -505,6 +555,7 @@ class _MainScreenState extends State<MainScreen> {
                     child: Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
                             children: [
@@ -520,8 +571,7 @@ class _MainScreenState extends State<MainScreen> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    // 🌍 英語のときは Vol. にする
-                                    Text('${record.subjectName} ${isEn ? "Vol." : "第"}${record.lectureNumber}${isEn ? "" : "回"}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                    Text('${record.subjectName} ${isEn ? "Vol." : tr('vol')}${record.lectureNumber}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18), maxLines: 1, overflow: TextOverflow.ellipsis),
                                     const SizedBox(height: 4),
                                     Text('${record.date.month}/${record.date.day} ${record.date.hour}:${record.date.minute.toString().padLeft(2, '0')}', style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
                                   ],
@@ -626,12 +676,11 @@ class _MainScreenState extends State<MainScreen> {
                           ],
 
                           const Padding(padding: EdgeInsets.symmetric(vertical: 8.0), child: Divider()),
-                          // 🌟 【大改修】Row から Wrap へ！これでドイツ語等でも絶対はみ出しません！
                           Wrap(
                             alignment: WrapAlignment.end,
                             crossAxisAlignment: WrapCrossAlignment.center,
-                            spacing: 8.0, // ボタン間の横のすき間
-                            runSpacing: 8.0, // 改行した時の縦のすき間
+                            spacing: 8.0, 
+                            runSpacing: 8.0,
                             children: [
                               IconButton(icon: const Icon(Icons.ios_share, color: Colors.blueAccent), onPressed: () => _shareAudioFile(record)),
                               IconButton(icon: const Icon(Icons.edit_outlined, color: Colors.grey), onPressed: () => _showEditDialog(record)),
@@ -650,7 +699,7 @@ class _MainScreenState extends State<MainScreen> {
                                   ));
                                 },
                                 icon: Icon(hasSummary ? Icons.visibility : Icons.auto_awesome, size: 18),
-                                label: Text(tr(hasSummary ? 'btn_read_summary' : 'btn_ai_summary')), // 🌍 翻訳
+                                label: Text(tr(hasSummary ? 'btn_read_summary' : 'btn_ai_summary')), 
                               ),
                             ],
                           ),
@@ -666,7 +715,8 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Widget _buildTimetableTab() {
-    final List<String> weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+    // 🌟 時間割の曜日を多言語対応
+    final List<String> weekdays = [tr('mon'), tr('tue'), tr('wed'), tr('thu'), tr('fri')];
     final List<Color> colorPalette = [
       Colors.red.shade100, Colors.blue.shade100, Colors.green.shade100, Colors.orange.shade100, 
       Colors.purple.shade100, Colors.yellow.shade100, Colors.teal.shade100, Colors.pink.shade100,
@@ -680,16 +730,21 @@ class _MainScreenState extends State<MainScreen> {
       TextEditingController controller = TextEditingController(text: entry?.subjectName);
       int selectedColorValue = entry?.colorValue ?? colorPalette[1].value;
 
+      // 🌟 フォーマットから現在の言語の「〇限」「P〇」などを取得
+      String periodText = tr('period_format').replaceAll('{num}', period.toString());
+
       await showDialog(
         context: context,
         builder: (context) => StatefulBuilder(
           builder: (context, setStateDialog) => AlertDialog(
-            title: Text('${weekdays[weekday - 1]} - P$period'),
+            title: Text('${weekdays[weekday - 1]} - $periodText'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: controller, decoration: const InputDecoration(hintText: 'Subject'), autofocus: true),
+                TextField(controller: controller, decoration: InputDecoration(hintText: tr('subject_hint')), autofocus: true),
                 const SizedBox(height: 20),
+                Text(tr('bg_color_select'), style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 10),
                 Wrap(
                   spacing: 8, runSpacing: 8,
                   children: colorPalette.map((color) => GestureDetector(
@@ -729,7 +784,7 @@ class _MainScreenState extends State<MainScreen> {
         context: context,
         builder: (context) => StatefulBuilder(
           builder: (context, setStateDialog) => AlertDialog(
-            title: Text(tr('tab_timetable')),
+            title: Text(tr('setting_title')),
             content: SizedBox(
               width: double.maxFinite,
               child: Column(
@@ -738,7 +793,7 @@ class _MainScreenState extends State<MainScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Max Periods:'),
+                      Text(tr('setting_max_period')),
                       DropdownButton<int>(
                         value: tempMaxPeriods,
                         items: [4, 5, 6, 7, 8].map((e) => DropdownMenuItem(value: e, child: Text('$e'))).toList(),
@@ -753,8 +808,9 @@ class _MainScreenState extends State<MainScreen> {
                       itemBuilder: (context, index) {
                         int p = index + 1;
                         PeriodTime pt = globalCollegePeriods[p] ?? PeriodTime(9, 0, 10, 30);
+                        String pText = tr('period_format').replaceAll('{num}', p.toString());
                         return ListTile(
-                          title: Text('P$p', style: const TextStyle(fontWeight: FontWeight.bold)),
+                          title: Text(pText, style: const TextStyle(fontWeight: FontWeight.bold)),
                           subtitle: Text('${pt.startH}:${pt.startM.toString().padLeft(2,'0')} - ${pt.endH}:${pt.endM.toString().padLeft(2,'0')}'),
                           trailing: const Icon(Icons.edit, size: 16),
                           onTap: () async {
@@ -791,7 +847,7 @@ class _MainScreenState extends State<MainScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(tr('tab_timetable'), style: const TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.bold)), // 🌍 翻訳
+        title: Text(tr('tab_timetable'), style: const TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.bold)), 
         backgroundColor: Colors.white, elevation: 0,
         actions: [IconButton(icon: const Icon(Icons.settings, color: Colors.grey), onPressed: showSettingsDialog)],
       ),
@@ -801,29 +857,40 @@ class _MainScreenState extends State<MainScreen> {
         child: SingleChildScrollView(
           child: Table(
             border: TableBorder.all(color: Colors.grey.shade300, width: 1, borderRadius: BorderRadius.circular(8)),
-            columnWidths: const { 0: FixedColumnWidth(40) },
+            // 🌟 10限など文字数が長くなってもはみ出さないよう、列幅を40px -> 50pxに拡張
+            columnWidths: const { 0: FixedColumnWidth(50) },
             children: [
               TableRow(
                 decoration: BoxDecoration(color: Colors.grey.shade100),
                 children: [
                   const SizedBox(),
-                  ...weekdays.map((day) => Padding(padding: const EdgeInsets.all(8.0), child: Center(child: Text(day, style: const TextStyle(fontWeight: FontWeight.bold))))),
+                  ...weekdays.map((day) => Padding(padding: const EdgeInsets.all(4.0), child: Center(child: Text(day, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12))))),
                 ],
               ),
               for (int period = 1; period <= globalMaxPeriods; period++)
                 TableRow(
                   children: [
-                    TableCell(verticalAlignment: TableCellVerticalAlignment.middle, child: Center(child: Text('$period', style: const TextStyle(fontWeight: FontWeight.bold)))),
+                    // 🌟 左側の「1」を「1限/P1」などの言語対応フォーマットに変更！
+                    TableCell(
+                      verticalAlignment: TableCellVerticalAlignment.middle, 
+                      child: Center(
+                        child: Text(
+                          tr('period_format').replaceAll('{num}', period.toString()), 
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)
+                        )
+                      )
+                    ),
                     for (int weekday = 1; weekday <= 5; weekday++)
                       TableCell(
                         verticalAlignment: TableCellVerticalAlignment.middle,
                         child: InkWell(
                           onTap: () => showEditCellDialog(weekday, period, getEntryFor(weekday, period)),
                           child: Container(
-                            height: 80, padding: const EdgeInsets.all(4),
+                            height: 80, padding: const EdgeInsets.all(2),
                             color: getEntryFor(weekday, period) != null ? Color(getEntryFor(weekday, period)!.colorValue) : Colors.white,
                             child: Center(
-                              child: Text(getEntryFor(weekday, period)?.subjectName ?? '', textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87)),
+                              child: Text(getEntryFor(weekday, period)?.subjectName ?? '', textAlign: TextAlign.center, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
                             ),
                           ),
                         ),
@@ -842,23 +909,21 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
       appBar: _currentIndex != 2 ? AppBar(
-        title: Text(tr('app_title'), style: const TextStyle(fontWeight: FontWeight.bold)), // 🌍 翻訳
+        title: Text(tr('app_title'), style: const TextStyle(fontWeight: FontWeight.bold)), 
         backgroundColor: Colors.white, elevation: 0,
         actions: [
-          // 🌟 画面右上に常に地球儀（言語切替）ボタンを表示！
-          IconButton(
-            icon: const Icon(Icons.language, color: Colors.deepPurple),
-            onPressed: _showLanguagePicker,
-          )
+          IconButton(icon: const Icon(Icons.language, color: Colors.deepPurple), onPressed: _showLanguagePicker)
         ],
       ) : null,
-      body: IndexedStack(
-        index: _currentIndex,
-        children: [
-          _buildRecordTab(),
-          _buildHistoryTab(),
-          _buildTimetableTab(),
-        ],
+      body: WithForegroundTask(
+        child: IndexedStack(
+          index: _currentIndex,
+          children: [
+            _buildRecordTab(),
+            _buildHistoryTab(),
+            _buildTimetableTab(),
+          ],
+        ),
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
@@ -868,9 +933,9 @@ class _MainScreenState extends State<MainScreen> {
         backgroundColor: Colors.white,
         elevation: 8,
         items: [
-          BottomNavigationBarItem(icon: const Icon(Icons.mic), label: tr('tab_record')), // 🌍 翻訳
-          BottomNavigationBarItem(icon: const Icon(Icons.library_books), label: tr('tab_history')), // 🌍 翻訳
-          BottomNavigationBarItem(icon: const Icon(Icons.grid_on), label: tr('tab_timetable')), // 🌍 翻訳
+          BottomNavigationBarItem(icon: const Icon(Icons.mic), label: tr('tab_record')), 
+          BottomNavigationBarItem(icon: const Icon(Icons.library_books), label: tr('tab_history')), 
+          BottomNavigationBarItem(icon: const Icon(Icons.grid_on), label: tr('tab_timetable')), 
         ],
       ),
     );

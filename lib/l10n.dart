@@ -123,5 +123,30 @@ const Map<String, Map<String, String>> _dictionary = {
   },
   'setting_title': {'en': 'Timetable Settings', 'ja': '時間割の設定'},
   'setting_max_period': {'en': 'Max Periods:', 'ja': '最大時限数:'},
-  'vol': {'en': 'Vol.', 'ja': '第'}
+  'vol': {'en': 'Vol.', 'ja': '第'},
+
+  // 🌟🌟🌟 ここから下が抜けていた「カレンダー周り」の必須データです！ 🌟🌟🌟
+  'mon': {'en': 'Mon', 'ja': '月', 'ko': '월', 'zh': '一', 'de': 'Mo', 'es': 'Lun', 'fr': 'Lun'},
+  'tue': {'en': 'Tue', 'ja': '火', 'ko': '화', 'zh': '二', 'de': 'Di', 'es': 'Mar', 'fr': 'Mar'},
+  'wed': {'en': 'Wed', 'ja': '水', 'ko': '수', 'zh': '三', 'de': 'Mi', 'es': 'Mié', 'fr': 'Mer'},
+  'thu': {'en': 'Thu', 'ja': '木', 'ko': '목', 'zh': '四', 'de': 'Do', 'es': 'Jue', 'fr': 'Jeu'},
+  'fri': {'en': 'Fri', 'ja': '金', 'ko': '금', 'zh': '五', 'de': 'Fr', 'es': 'Vie', 'fr': 'Ven'},
+  
+  // 🌟 {num} が 1, 2, 3... の数字に置き換わります
+  'period_format': {
+    'en': 'P{num}', 
+    'ja': '{num}限', 
+    'ko': '{num}교시', 
+    'zh': '第{num}節', 
+    'de': 'St{num}', 
+    'es': 'P{num}', 
+    'fr': 'C{num}'
+  },
+  
+  'subject_hint': {'en': 'Subject Name (Empty to delete)', 'ja': '科目名 (空で削除)', 'ko': '과목명 (비우면 삭제)', 'zh': '科目名稱 (留空刪除)'},
+  'bg_color_select': {'en': 'Select Background Color', 'ja': '背景色を選択', 'ko': '배경색 선택', 'zh': '選擇背景顏色'},
+  'vol_suffix': {'en': '', 'ja': '回', 'ko': '회', 'zh': '回'},
+  'summary_uploading': {'en': '1/2: Uploading audio...', 'ja': '1/2: 音声をサーバーへアップロード中...'},
+  'summary_generating': {'en': '2/2: AI is writing notes...', 'ja': '2/2: 優秀なTAがノートを作成中...'},
+  'copied': {'en': 'Copied to clipboard!', 'ja': '要約をクリップボードにコピーしました！'}
 };
